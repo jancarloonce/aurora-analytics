@@ -1,17 +1,17 @@
-# Aurora Analytics - News Ingestion Service
+# Aurora Analytics - News Ingest Pipeline
 
 A real-time news ingestion service that polls the [NewsAPI](https://newsapi.org) Everything endpoint and streams structured article records to an **AWS Kinesis Data Stream**.
 
-> **AWS Kinesis is fully implemented.** The service runs in two modes - local development uses LocalStack to emulate Kinesis locally, and production runs on an EC2 instance with an IAM role writing directly to a real AWS Kinesis stream. A live deployment is already running on AWS. See [Live Deployment](#live-deployment) to verify it.
+> **AWS Kinesis is fully implemented.** The service runs locally using LocalStack to emulate Kinesis, and is deployed on an EC2 instance with an IAM role writing directly to a real AWS Kinesis stream. A live deployment is already running on AWS. See [Live Deployment](#live-deployment) to verify it.
 
 ---
 
-## Running Modes
+## Local and AWS Deployment
 
-| Mode | Kinesis | Credentials | How to run |
+| | Kinesis | Credentials | How to run |
 |---|---|---|---|
-| **Development** | LocalStack - emulates AWS Kinesis locally | Dummy values, no AWS account needed | `make dev-up` |
-| **Production** | Real AWS Kinesis Data Stream | IAM role on EC2 - no credentials needed | Deployed on EC2, see [Production Deployment](#production-deployment) |
+| **Local** | LocalStack - emulates AWS Kinesis locally | Dummy values, no AWS account needed | `make dev-up` |
+| **AWS** | Real AWS Kinesis Data Stream | IAM role on EC2 - no credentials needed | Deployed on EC2, see [Production Deployment](#production-deployment) |
 
 All commands are available via the `Makefile`. See the [Make Commands](#make-commands) section for the full reference.
 
@@ -84,7 +84,7 @@ This will:
 
 **4. Verify records are flowing**
 
-After ~60 seconds, open the dashboard in your browser:
+After approximate 60 seconds, open the dashboard in your browser:
 
 ```
 http://localhost:8501
@@ -130,7 +130,7 @@ Production runs on an EC2 instance with an IAM role attached. The IAM role provi
 
 **1. Create the secret in Secrets Manager**
 
-In the AWS Console go to **Secrets Manager → Store a new secret → Other type of secret** and add the following key/value pairs:
+In the AWS Console go to **Secrets Manager > Store a new secret > Other type of secret** and add the following key/value pairs:
 
 | Key | Example value |
 |---|---|
@@ -207,7 +207,7 @@ The service is currently running on an AWS EC2 instance (`t2.micro`, `us-east-1`
 
 To verify data is also flowing through Kinesis, check the stream via the AWS Console:
 
-**AWS Console → Kinesis → Data Streams → news-api-stream → Data viewer**
+**AWS Console > Kinesis > Data Streams > news-api-stream > Data viewer**
 
 ---
 
@@ -228,18 +228,6 @@ Each record written to the stream is a UTF-8 encoded JSON object:
 }
 ```
 
-| Field | Description |
-|---|---|
-| `article_id` | Deterministic UUID-5 derived from the article URL |
-| `source_name` | Publication name from the NewsAPI source object |
-| `title` | Article headline |
-| `content` | Article body excerpt (may be truncated by NewsAPI on free tier) |
-| `url` | Canonical URL of the article |
-| `author` | Byline, or `null` if not provided |
-| `published_at` | ISO 8601 publish timestamp from the source |
-| `ingested_at` | ISO 8601 UTC timestamp when the record was processed |
-
-The Kinesis partition key is `article_id`, distributing records evenly across shards.
 
 ---
 
@@ -297,11 +285,3 @@ service.run()
 ```
 
 ---
-
-## Design Notes
-
-- **Deduplication** is handled in-memory using a set of seen `article_id` values. This covers duplicates within a single run. A container restart will replay articles from the most recent poll window, which is expected in a streaming pipeline where downstream consumers should be idempotent.
-- **article_id** is a UUID-5 derived deterministically from the article URL, meaning the same article always produces the same ID regardless of when it was fetched.
-- **Kinesis batching** uses `PutRecords` with batches of up to 500 records, the API maximum, to minimise round trips.
-- **LocalStack** is used for local development. Setting `KINESIS_ENDPOINT_URL=http://localstack:4566` redirects all boto3 Kinesis calls to the local emulator. Removing the variable in production causes boto3 to connect to real AWS with no other code changes.
-- **IAM roles** are used in production so no credentials are ever stored or passed to the container. boto3 picks them up automatically from the EC2 instance metadata.
