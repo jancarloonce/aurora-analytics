@@ -89,7 +89,7 @@ class NewsAPIIngester(BaseIngester):
         url = (raw.get("url") or "").strip()
         title = (raw.get("title") or "").strip()
 
-        if not url or not title or title == "[Removed]":
+        if not url or not title:
             return None
 
         return {

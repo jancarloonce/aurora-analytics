@@ -32,6 +32,10 @@ aurora-analytics/
 │   └── kinesis.py       # KinesisPublisher implementation
 ├── localstack/
 │   └── init.sh          # Creates the Kinesis stream inside LocalStack on startup
+├── tests/
+│   ├── test_newsapi.py      # Tests for NewsAPIIngester
+│   ├── test_kinesis.py      # Tests for KinesisPublisher
+│   └── test_ingester.py     # Tests for IngestionService deduplication
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
@@ -234,10 +238,38 @@ Each record written to the stream is a UTF-8 encoded JSON object:
 
 ---
 
+## Testing
+
+Tests use `pytest` with `unittest.mock` - no real AWS or network calls are made.
+
+**Install dependencies and run:**
+
+```bash
+pip install -r requirements.txt
+python -m pytest tests/ -v
+```
+
+Or via Docker (no local Python setup needed):
+
+```bash
+docker-compose run --rm ingester python -m pytest tests/ -v
+```
+
+**What is tested:**
+
+| File | Coverage |
+|---|---|
+| `test_newsapi.py` | `transform()` validation, `fetch()` retry logic, DLQ on failure |
+| `test_kinesis.py` | `publish()` batching, retry on failed records, DLQ on failure |
+| `test_ingester.py` | Deduplication, `seen_ids` cache clearing |
+
+---
+
 ## Make Commands
 
 | Command | Description |
 |---|---|
+| `make test` | Run the test suite |
 | `make dev-up` | Build and start local dev with LocalStack |
 | `make dev-start` | Start local dev without rebuilding |
 | `make dev-down` | Stop all running containers |
@@ -245,6 +277,20 @@ Each record written to the stream is a UTF-8 encoded JSON object:
 | `make prod-build` | Build the production Docker image |
 | `make prod-push` | Push image to DockerHub |
 | `make prod-pull` | Pull image from DockerHub |
+
+---
+
+## Design Notes
+
+- **Deduplication** is handled in-memory using a set of seen `article_id` values. This covers duplicates within a single run. The set is cleared when it exceeds 2000 entries to prevent unbounded memory growth. A container restart will replay articles from the most recent poll window, which is expected in a streaming pipeline where downstream consumers should be idempotent.
+- **article_id** is a UUID-5 derived deterministically from the article URL, meaning the same article always produces the same ID regardless of when it was fetched.
+- **Validation** rejects any article missing a `url` or `title`. Optional fields (`author`, `content`) are stored as `null` rather than blocking the record.
+- **Retry logic** retries failed NewsAPI requests up to 3 times with exponential backoff. Kinesis `PutRecords` failures retry only the failed records, not the entire batch.
+- **Dead letter queue** - records that fail after all retries are sent to an SQS queue (`aurora-analytics-dlq`) so nothing is silently lost.
+- **Kinesis batching** uses `PutRecords` with batches of up to 500 records, the API maximum, to minimise round trips.
+- **LocalStack** is used for local development. Setting `KINESIS_ENDPOINT_URL=http://localstack:4566` redirects all boto3 calls to the local emulator. Removing the variable in production causes boto3 to connect to real AWS with no other code changes.
+- **IAM roles** are used in production so no credentials are ever stored or passed to the container. boto3 picks them up automatically from the EC2 instance metadata.
+- **Secrets Manager** stores all production config. The app fetches the secret at startup when `APP_ENV=production`, injecting values into the environment before any service initialises.
 
 ---
 

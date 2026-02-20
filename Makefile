@@ -1,5 +1,10 @@
 DOCKERHUB_IMAGE = jancarloonce/aurora-analytics
 
+# Test
+
+test:
+	pytest tests/ -v
+
 # Dev
 
 dev-up:
