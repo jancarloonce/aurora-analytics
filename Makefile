@@ -11,10 +11,10 @@ dev-start:
 dev-down:
 	docker-compose down
 
-dev-read:
-	docker-compose run --rm ingester python reader.py
+dev-dashboard:
+	docker-compose up --build dashboard
 
-# Prod 
+# Prod
 
 prod-build:
 	docker build -t $(DOCKERHUB_IMAGE) .
@@ -25,8 +25,3 @@ prod-push:
 prod-pull:
 	docker pull $(DOCKERHUB_IMAGE)
 
-prod-run:
-	docker run \
-		-e APP_ENV=production \
-		-e AWS_REGION=us-east-1 \
-		$(DOCKERHUB_IMAGE)
