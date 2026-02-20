@@ -54,7 +54,7 @@ class TestTransform:
     def test_missing_title_returns_none(self):
         assert self.ingester.transform({**VALID_RAW, "title": None}) is None
 
-def test_missing_author_stored_as_none(self):
+    def test_missing_author_stored_as_none(self):
         result = self.ingester.transform({**VALID_RAW, "author": None})
         assert result["author"] is None
 
