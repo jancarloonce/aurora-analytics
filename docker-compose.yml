@@ -1,0 +1,22 @@
+services:
+  localstack:
+    image: localstack/localstack:3.0
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=kinesis
+      - DEFAULT_REGION=us-east-1
+    volumes:
+      - ./localstack/init.sh:/etc/localstack/init/ready.d/init.sh
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ingester:
+    build: .
+    env_file: .env
+    depends_on:
+      localstack:
+        condition: service_healthy
