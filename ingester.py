@@ -28,7 +28,7 @@ class IngestionService:
 
     def run(self) -> None:
         logger.info(
-            "Ingestion service started — stream=%s, query='%s', interval=%ds, lookback=%ds",
+            "Ingestion service started - stream=%s, query='%s', interval=%ds, lookback=%ds",
             os.getenv("KINESIS_STREAM_NAME"),
             os.getenv("NEWS_QUERY", "all"),
             self.poll_interval,
