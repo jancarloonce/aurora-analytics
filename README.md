@@ -25,6 +25,7 @@ aurora-analytics/
 ├── base.py              # BaseIngester and BasePublisher abstract classes
 ├── config.py            # Environment-aware config loader
 ├── dashboard.py         # Streamlit dashboard - live article viewer
+├── dlq.py               # Dead letter queue helper - sends failed records to SQS
 ├── sources/
 │   └── newsapi.py       # NewsAPIIngester implementation
 ├── publishers/
@@ -136,6 +137,7 @@ In the AWS Console go to **Secrets Manager > Store a new secret > Other type of 
 |---|---|
 | `NEWSAPI_KEY` | `your_newsapi_key` |
 | `KINESIS_STREAM_NAME` | `news-api-stream` |
+| `SQS_DLQ_URL` | `https://sqs.us-east-1.amazonaws.com/<account-id>/aurora-analytics-dlq` |
 | `NEWS_QUERY` | `technology` |
 | `POLL_INTERVAL_SECONDS` | `60` |
 | `LOOKBACK_SECONDS` | `86400` |
@@ -146,6 +148,7 @@ Name the secret `aurora-analytics/production`.
 - Instance type: `t2.micro` (free tier eligible)
 - Attach an IAM role with these two policies:
   - `AmazonKinesisFullAccess`
+  - `AmazonSQSFullAccess`
   - `SecretsManagerReadWrite` (or a custom policy scoped to `aurora-analytics/production`)
 - In the instance's **Security Group**, open two inbound ports:
   - Port `22` (SSH) - to connect to the instance

@@ -1,10 +1,12 @@
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 
 import requests
 
+import dlq
 from base import BaseIngester
 
 logger = logging.getLogger(__name__)
@@ -17,11 +19,40 @@ class NewsAPIIngester(BaseIngester):
 
     PAGE_SIZE = 100
     MAX_PAGES = 1
+    MAX_RETRIES = 3
+    RETRY_BACKOFF = 5
 
     def __init__(self) -> None:
         self.api_key = os.environ["NEWSAPI_KEY"]
         self.query = os.getenv("NEWS_QUERY")
         self.language = os.getenv("NEWS_LANGUAGE")
+
+    def _fetch_page(self, params: dict) -> list[dict] | None:
+        safe_params = {k: v for k, v in params.items() if k != "apiKey"}
+
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                response = requests.get(self.BASE_URL, params=params, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+            except requests.RequestException as exc:
+                logger.warning("NewsAPI request failed (attempt %d/%d): %s", attempt, self.MAX_RETRIES, exc)
+                if attempt < self.MAX_RETRIES:
+                    time.sleep(self.RETRY_BACKOFF * attempt)
+                    continue
+                logger.error("NewsAPI request failed after %d attempts. params=%s", self.MAX_RETRIES, safe_params)
+                dlq.send({"source": "newsapi", "params": safe_params, "error": str(exc)})
+                return None
+
+            if data.get("status") != "ok":
+                error_msg = data.get("message", "unknown")
+                logger.error("NewsAPI returned an error: %s. params=%s", error_msg, safe_params)
+                dlq.send({"source": "newsapi", "params": safe_params, "error": error_msg})
+                return None
+
+            return data.get("articles", [])
+
+        return None
 
     def fetch(self, since: datetime) -> list[dict]:
         articles: list[dict] = []
@@ -41,19 +72,11 @@ class NewsAPIIngester(BaseIngester):
             if self.language:
                 params["language"] = self.language
 
-            try:
-                response = requests.get(self.BASE_URL, params=params, timeout=30)
-                response.raise_for_status()
-                data = response.json()
-            except requests.RequestException as exc:
-                logger.error("NewsAPI request failed on page %d: %s", page, exc)
+            page_articles = self._fetch_page(params)
+
+            if page_articles is None:
                 break
 
-            if data.get("status") != "ok":
-                logger.error("NewsAPI returned an error: %s", data.get("message", "unknown"))
-                break
-
-            page_articles = data.get("articles", [])
             articles.extend(page_articles)
             logger.info("Fetched %d articles from page %d", len(page_articles), page)
 
