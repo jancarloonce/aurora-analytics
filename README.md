@@ -144,7 +144,7 @@ In the AWS Console go to **Secrets Manager > Store a new secret > Other type of 
 | `KINESIS_STREAM_NAME` | `news-api-stream` |
 | `SQS_DLQ_URL` | `https://sqs.us-east-1.amazonaws.com/<account-id>/aurora-analytics-dlq` |
 | `SQS_LOGS_URL` | `https://sqs.us-east-1.amazonaws.com/<account-id>/aurora-analytics-logs` |
-| `NEWS_QUERY` | `technology` |
+| `NEWS_QUERY` | `Bitcoin` |
 | `POLL_INTERVAL_SECONDS` | `60` |
 | `LOOKBACK_SECONDS` | `86400` |
 
