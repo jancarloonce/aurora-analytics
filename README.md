@@ -59,7 +59,7 @@ Local development runs entirely on your machine using LocalStack as a drop-in AW
 **1. Clone the repository**
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/jancarloonce/aurora-analytics.git
 cd aurora-analytics
 ```
 
