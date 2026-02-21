@@ -26,6 +26,7 @@ aurora-analytics/
 ├── config.py            # Environment-aware config loader
 ├── dashboard.py         # Streamlit dashboard - live article viewer
 ├── dlq.py               # Dead letter queue helper - sends failed records to SQS
+├── logging_handler.py   # Custom logging handler - sends WARNING+ logs to SQS
 ├── sources/
 │   └── newsapi.py       # NewsAPIIngester implementation
 ├── publishers/
@@ -142,6 +143,7 @@ In the AWS Console go to **Secrets Manager > Store a new secret > Other type of 
 | `NEWSAPI_KEY` | `your_newsapi_key` |
 | `KINESIS_STREAM_NAME` | `news-api-stream` |
 | `SQS_DLQ_URL` | `https://sqs.us-east-1.amazonaws.com/<account-id>/aurora-analytics-dlq` |
+| `SQS_LOGS_URL` | `https://sqs.us-east-1.amazonaws.com/<account-id>/aurora-analytics-logs` |
 | `NEWS_QUERY` | `technology` |
 | `POLL_INTERVAL_SECONDS` | `60` |
 | `LOOKBACK_SECONDS` | `86400` |
@@ -177,13 +179,13 @@ docker pull jancarloonce/aurora-analytics
 **5. Run the ingester**
 
 ```bash
-docker run -d -e APP_ENV=production -e AWS_REGION=us-east-1 jancarloonce/aurora-analytics
+docker run -d --restart unless-stopped -e APP_ENV=production -e AWS_REGION=us-east-1 jancarloonce/aurora-analytics
 ```
 
 **6. Run the dashboard**
 
 ```bash
-docker run -d -e APP_ENV=production -e AWS_REGION=us-east-1 -p 8501:8501 jancarloonce/aurora-analytics python -m streamlit run dashboard.py --server.port=8501 --server.address=0.0.0.0
+docker run -d --restart unless-stopped -e APP_ENV=production -e AWS_REGION=us-east-1 -p 8501:8501 jancarloonce/aurora-analytics python -m streamlit run dashboard.py --server.port=8501 --server.address=0.0.0.0
 ```
 
 Then open `http://<your-ec2-public-ip>:8501` in your browser.
@@ -200,8 +202,8 @@ When a new image is pushed to DockerHub, run the following on the EC2 instance t
 docker pull jancarloonce/aurora-analytics
 docker stop $(docker ps -q)
 docker rm $(docker ps -aq)
-docker run -d -e APP_ENV=production -e AWS_REGION=us-east-1 jancarloonce/aurora-analytics
-docker run -d -e APP_ENV=production -e AWS_REGION=us-east-1 -p 8501:8501 jancarloonce/aurora-analytics python -m streamlit run dashboard.py --server.port=8501 --server.address=0.0.0.0
+docker run -d --restart unless-stopped -e APP_ENV=production -e AWS_REGION=us-east-1 jancarloonce/aurora-analytics
+docker run -d --restart unless-stopped -e APP_ENV=production -e AWS_REGION=us-east-1 -p 8501:8501 jancarloonce/aurora-analytics python -m streamlit run dashboard.py --server.port=8501 --server.address=0.0.0.0
 ```
 
 ---

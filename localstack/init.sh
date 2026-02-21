@@ -11,3 +11,8 @@ awslocal sqs create-queue \
   --queue-name aurora-analytics-dlq
 
 echo "SQS queue 'aurora-analytics-dlq' created successfully"
+
+awslocal sqs create-queue \
+  --queue-name aurora-analytics-logs
+
+echo "SQS queue 'aurora-analytics-logs' created successfully"
