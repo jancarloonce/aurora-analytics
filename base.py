@@ -2,6 +2,14 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 
 
+class RateLimitedError(Exception):
+    """Raised when the upstream API rate limit is exhausted after all retries."""
+
+    def __init__(self, retry_after: int) -> None:
+        self.retry_after = retry_after
+        super().__init__(f"Rate limited. Retry after {retry_after}s.")
+
+
 class BaseIngester(ABC):
     """Pulls data from a source and maps it to the canonical article schema."""
 
