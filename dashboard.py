@@ -17,11 +17,21 @@ REGION = os.getenv("AWS_REGION", "us-east-1")
 ENDPOINT_URL = os.getenv("KINESIS_ENDPOINT_URL")
 REFRESH_INTERVAL = int(os.getenv("DASHBOARD_REFRESH_SECONDS", "10"))
 RECORD_LIMIT = 100
+SQS_DLQ_URL = os.getenv("SQS_DLQ_URL")
+SQS_LOGS_URL = os.getenv("SQS_LOGS_URL")
 
 
 def get_kinesis_client():
     return boto3.client(
         "kinesis",
+        region_name=REGION,
+        endpoint_url=ENDPOINT_URL,
+    )
+
+
+def get_sqs_client():
+    return boto3.client(
+        "sqs",
         region_name=REGION,
         endpoint_url=ENDPOINT_URL,
     )
@@ -67,12 +77,34 @@ def fetch_all_records() -> list[dict]:
     return records
 
 
+def fetch_sqs_messages(queue_url: str) -> list[dict]:
+    try:
+        response = get_sqs_client().receive_message(
+            QueueUrl=queue_url,
+            MaxNumberOfMessages=10,
+            VisibilityTimeout=0,
+            WaitTimeSeconds=0,
+        )
+    except Exception as e:
+        st.warning(f"Could not read SQS queue: {e}")
+        return []
+
+    messages = []
+    for msg in response.get("Messages", []):
+        try:
+            messages.append(json.loads(msg["Body"]))
+        except json.JSONDecodeError:
+            continue
+
+    messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
+    return messages
+
+
 def build_chart_data(records: list[dict]) -> pd.DataFrame | None:
     buckets: Counter = Counter()
     for r in records:
         ingested_at = r.get("ingested_at", "")
         if ingested_at:
-            # Truncate to the minute: "YYYY-MM-DDTHH:MM"
             bucket = ingested_at[:16].replace("T", " ")
             buckets[bucket] += 1
 
@@ -104,9 +136,31 @@ def render_article(article: dict) -> None:
         )
 
 
-def render_log_entry(index: int, article: dict) -> None:
+def render_stream_record(index: int, article: dict) -> None:
     with st.expander(f"Article {index} - {article.get('title', 'Untitled')[:80]}"):
         st.code(json.dumps(article, indent=2), language="json")
+
+
+def render_log_message(msg: dict) -> None:
+    level = msg.get("level", "INFO")
+    color = "red" if level == "ERROR" else "orange"
+    with st.container(border=True):
+        st.markdown(f":{color}[**{level}**] `{msg.get('timestamp', 'N/A')}` — {msg.get('logger', '')}")
+        st.text(msg.get("message", ""))
+
+
+def render_dlq_record(msg: dict) -> None:
+    with st.container(border=True):
+        col1, col2 = st.columns(2)
+        col1.markdown(f"**Source:** `{msg.get('source', 'N/A')}`")
+        col2.markdown(f"**Failed at:** {msg.get('failed_at', 'N/A')}")
+        st.markdown(f"**Error:** {msg.get('error', 'N/A')}")
+        if msg.get("record"):
+            with st.expander("Record"):
+                st.code(json.dumps(msg["record"], indent=2), language="json")
+        if msg.get("params"):
+            with st.expander("Request params"):
+                st.code(json.dumps(msg["params"], indent=2), language="json")
 
 
 def main() -> None:
@@ -131,7 +185,6 @@ def main() -> None:
         f"**{len(records)} article(s)** in stream - last fetched at `{st.session_state.last_fetch}`"
     )
 
-    # Chart
     st.subheader("Articles Ingested Over Time")
     chart_data = build_chart_data(records)
     if chart_data is not None:
@@ -141,8 +194,9 @@ def main() -> None:
 
     st.divider()
 
-    # Tabs
-    tab_articles, tab_logs = st.tabs(["Articles", "Logs"])
+    tab_articles, tab_stream, tab_logs, tab_dlq = st.tabs([
+        "Articles", "Stream Records", "Ingester Logs", "DLQ"
+    ])
 
     with tab_articles:
         if not records:
@@ -151,13 +205,37 @@ def main() -> None:
             for article in records:
                 render_article(article)
 
-    with tab_logs:
+    with tab_stream:
         if not records:
             st.info("No records found in the stream yet.")
         else:
             st.caption(f"Showing {len(records)} record(s) from stream - newest first")
             for i, article in enumerate(records, 1):
-                render_log_entry(i, article)
+                render_stream_record(i, article)
+
+    with tab_logs:
+        if not SQS_LOGS_URL:
+            st.info("SQS_LOGS_URL not configured.")
+        else:
+            log_messages = fetch_sqs_messages(SQS_LOGS_URL)
+            if not log_messages:
+                st.success("No warnings or errors logged.")
+            else:
+                st.caption(f"{len(log_messages)} message(s) - newest first")
+                for msg in log_messages:
+                    render_log_message(msg)
+
+    with tab_dlq:
+        if not SQS_DLQ_URL:
+            st.info("SQS_DLQ_URL not configured.")
+        else:
+            dlq_messages = fetch_sqs_messages(SQS_DLQ_URL)
+            if not dlq_messages:
+                st.success("No failed records in the DLQ.")
+            else:
+                st.caption(f"{len(dlq_messages)} failed record(s) - newest first")
+                for msg in dlq_messages:
+                    render_dlq_record(msg)
 
     time.sleep(REFRESH_INTERVAL)
     st.rerun()

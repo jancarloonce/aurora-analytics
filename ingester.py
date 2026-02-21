@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import config
+import logging_handler
 from base import BaseIngester, BasePublisher
 from publishers.kinesis import KinesisPublisher
 from sources.newsapi import NewsAPIIngester
@@ -76,6 +77,7 @@ class IngestionService:
 
 if __name__ == "__main__":
     config.load()
+    logging.getLogger().addHandler(logging_handler.SQSLogHandler())
 
     service = IngestionService(
         ingester=NewsAPIIngester(),
