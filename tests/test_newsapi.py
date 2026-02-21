@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+from base import RateLimitedError
 from sources.newsapi import NewsAPIIngester
 
 VALID_RAW = {
@@ -74,8 +75,8 @@ class TestFetch:
     @patch("sources.newsapi.requests.get")
     def test_fetch_returns_articles_on_success(self, mock_get):
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = {"status": "ok", "articles": [VALID_RAW]}
-        mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
 
         articles = self.ingester.fetch(SINCE)
@@ -110,8 +111,8 @@ class TestFetch:
     @patch("sources.newsapi.requests.get")
     def test_fetch_sends_to_dlq_on_api_error_status(self, mock_get, mock_dlq):
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = {"status": "error", "message": "apiKeyInvalid"}
-        mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
 
         self.ingester.fetch(SINCE)
@@ -122,10 +123,70 @@ class TestFetch:
     @patch("sources.newsapi.requests.get")
     def test_fetch_stops_early_when_page_is_not_full(self, mock_get):
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = {"status": "ok", "articles": [VALID_RAW]}
-        mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
 
         self.ingester.fetch(SINCE)
 
         assert mock_get.call_count == 1
+
+    @patch("sources.newsapi.dlq.send")
+    @patch("sources.newsapi.time.sleep")
+    @patch("sources.newsapi.requests.get")
+    def test_fetch_raises_rate_limited_error_after_max_retries_on_429(self, mock_get, mock_sleep, mock_dlq):
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {"Retry-After": "30"}
+        mock_get.return_value = mock_response
+
+        with pytest.raises(RateLimitedError) as exc_info:
+            self.ingester.fetch(SINCE)
+
+        assert exc_info.value.retry_after == 30
+        assert mock_get.call_count == NewsAPIIngester.MAX_RETRIES
+        mock_dlq.assert_not_called()
+
+    @patch("sources.newsapi.dlq.send")
+    @patch("sources.newsapi.time.sleep")
+    @patch("sources.newsapi.requests.get")
+    def test_fetch_sleeps_for_retry_after_on_429(self, mock_get, mock_sleep, mock_dlq):
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {"Retry-After": "45"}
+        mock_get.return_value = mock_response
+
+        with pytest.raises(RateLimitedError):
+            self.ingester.fetch(SINCE)
+
+        sleep_args = [call.args[0] for call in mock_sleep.call_args_list]
+        assert all(s == 45 for s in sleep_args)
+
+    @patch("sources.newsapi.dlq.send")
+    @patch("sources.newsapi.time.sleep")
+    @patch("sources.newsapi.requests.get")
+    def test_fetch_retries_on_5xx_and_sends_to_dlq_after_max_retries(self, mock_get, mock_sleep, mock_dlq):
+        mock_response = MagicMock()
+        mock_response.status_code = 503
+        mock_get.return_value = mock_response
+
+        articles = self.ingester.fetch(SINCE)
+
+        assert articles == []
+        assert mock_get.call_count == NewsAPIIngester.MAX_RETRIES
+        mock_dlq.assert_called_once()
+        assert "HTTP 503" in mock_dlq.call_args[0][0]["error"]
+
+    @patch("sources.newsapi.dlq.send")
+    @patch("sources.newsapi.requests.get")
+    def test_fetch_sends_to_dlq_immediately_on_non_retryable_4xx(self, mock_get, mock_dlq):
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_get.return_value = mock_response
+
+        articles = self.ingester.fetch(SINCE)
+
+        assert articles == []
+        assert mock_get.call_count == 1
+        mock_dlq.assert_called_once()
+        assert "HTTP 401" in mock_dlq.call_args[0][0]["error"]

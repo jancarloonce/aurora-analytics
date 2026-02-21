@@ -1,5 +1,6 @@
 import logging
 import os
+import random
 import time
 import uuid
 from datetime import datetime, timezone
@@ -7,7 +8,7 @@ from datetime import datetime, timezone
 import requests
 
 import dlq
-from base import BaseIngester
+from base import BaseIngester, RateLimitedError
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +34,41 @@ class NewsAPIIngester(BaseIngester):
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
                 response = requests.get(self.BASE_URL, params=params, timeout=30)
-                response.raise_for_status()
-                data = response.json()
             except requests.RequestException as exc:
                 logger.warning("NewsAPI request failed (attempt %d/%d): %s", attempt, self.MAX_RETRIES, exc)
                 if attempt < self.MAX_RETRIES:
-                    time.sleep(self.RETRY_BACKOFF * attempt)
+                    wait = self.RETRY_BACKOFF * (2 ** (attempt - 1)) + random.uniform(0, 1)
+                    time.sleep(wait)
                     continue
                 logger.error("NewsAPI request failed after %d attempts. params=%s", self.MAX_RETRIES, safe_params)
                 dlq.send({"source": "newsapi", "params": safe_params, "error": str(exc)})
                 return None
+
+            if response.status_code == 429:
+                retry_after = int(response.headers.get("Retry-After", 60))
+                if attempt < self.MAX_RETRIES:
+                    logger.warning("Rate limited (attempt %d/%d). Waiting %ds.", attempt, self.MAX_RETRIES, retry_after)
+                    time.sleep(retry_after)
+                    continue
+                logger.error("Rate limited after %d attempts. params=%s", self.MAX_RETRIES, safe_params)
+                raise RateLimitedError(retry_after)
+
+            if response.status_code >= 500:
+                logger.warning("Server error %d (attempt %d/%d). params=%s", response.status_code, attempt, self.MAX_RETRIES, safe_params)
+                if attempt < self.MAX_RETRIES:
+                    wait = self.RETRY_BACKOFF * (2 ** (attempt - 1)) + random.uniform(0, 1)
+                    time.sleep(wait)
+                    continue
+                logger.error("Server error after %d attempts. params=%s", self.MAX_RETRIES, safe_params)
+                dlq.send({"source": "newsapi", "params": safe_params, "error": f"HTTP {response.status_code}"})
+                return None
+
+            if 400 <= response.status_code < 500:
+                logger.error("Non-retryable error %d. params=%s", response.status_code, safe_params)
+                dlq.send({"source": "newsapi", "params": safe_params, "error": f"HTTP {response.status_code}"})
+                return None
+
+            data = response.json()
 
             if data.get("status") != "ok":
                 error_msg = data.get("message", "unknown")

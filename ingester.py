@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import config
 import logging_handler
-from base import BaseIngester, BasePublisher
+from base import BaseIngester, BasePublisher, RateLimitedError
 from publishers.kinesis import KinesisPublisher
 from sources.newsapi import NewsAPIIngester
 
@@ -42,7 +42,12 @@ class IngestionService:
             cycle_start = datetime.now(timezone.utc)
             logger.info("Polling for articles published since %s", last_fetch.isoformat())
 
-            raw_articles = self.ingester.fetch(since=last_fetch)
+            try:
+                raw_articles = self.ingester.fetch(since=last_fetch)
+            except RateLimitedError as e:
+                logger.warning("Rate limit exhausted. Backing off for %ds before next poll.", e.retry_after)
+                time.sleep(e.retry_after)
+                continue
 
             new_articles: list[dict] = []
             for raw in raw_articles:
